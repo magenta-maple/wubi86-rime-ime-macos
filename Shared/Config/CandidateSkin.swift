@@ -271,7 +271,7 @@ struct CandidateSkin: Codable, Equatable {
 
     /// 内置主题：只读，应用时保留用户当前字体。
     static var presets: [CandidateSkin] {
-        [coralPreset, monochromePreset]
+        [coralPreset, monochromePreset, coralDarkPreset, monochromeDarkPreset]
     }
 
     // 珊瑚红：浅色白底、深色近黑底，首选珊瑚红高亮。
@@ -409,6 +409,22 @@ struct CandidateSkin: Codable, Equatable {
                 highlightCommentText: commentGreen
             )
         )
+    }
+
+    // 珊瑚红暗色：亮/暗都用珊瑚红的暗色配色，系统亮色下也保持深色候选栏
+    private static var coralDarkPreset: CandidateSkin {
+        var skin = coralPreset
+        skin.name = "珊瑚红·暗"
+        skin.light = skin.dark
+        return skin
+    }
+
+    // 简约黑白暗色：亮/暗都用简约黑白的暗色配色
+    private static var monochromeDarkPreset: CandidateSkin {
+        var skin = monochromePreset
+        skin.name = "简约黑白·暗"
+        skin.light = skin.dark
+        return skin
     }
 
     /// 比较外观是否一致（忽略字体，内置主题应用时会沿用当前字体）。

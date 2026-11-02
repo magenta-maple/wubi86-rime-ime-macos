@@ -185,6 +185,13 @@ enum MeifengInputSourceLock {
             guard restoreOnNextApp else { return }
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             if app?.bundleIdentifier == Bundle.main.bundleIdentifier { return }
+            // 企业微信 / 微信：重复 TISSelect 会在宿主 TextInput 栈里触发崩溃（CFRelease NULL）。
+            if IMEHostWorkarounds.skipsAutomaticInputSourceReselect(for: app?.bundleIdentifier) {
+                IMEAppDelegate.appendLaunchLog(
+                    "skip input source reselect for fragile host \(app?.bundleIdentifier ?? "?")"
+                )
+                return
+            }
             // 已经是玫枫就不要再选一次。重复 TISSelect 会让 Electron 只收到 deactivate，状态栏菜单挂不上。
             if isSelected() { return }
             DispatchQueue.main.async {

@@ -87,7 +87,7 @@ final class MeifengInputController: IMKInputController {
         // 记录当前大小写状态，光标提示要优先显示「大写」
         capsLockOn = NSEvent.modifierFlags.contains(.capsLock)
         // 光标出现时先标出当前中/英，避免打字后才发现要切换。可在设置里关闭。
-        if IMEAppearancePrefs.showCaretModeHint {
+        if IMEAppearancePrefs.showCaretModeHint, !IMEHostWorkarounds.skipsClientGeometry() {
             scheduleModeHintAtCaret()
         }
     }
@@ -102,7 +102,9 @@ final class MeifengInputController: IMKInputController {
         panel.hide()
         // 输入框失焦后提示不再属于当前会话，立刻收掉，避免残留在别的窗口上。
         modeHint.hide()
-        clearMarkedText()
+        if !IMEHostWorkarounds.skipsClientGeometry() {
+            clearMarkedText()
+        }
         super.deactivateServer(sender)
         log("deactivateServer")
     }
@@ -125,6 +127,8 @@ final class MeifengInputController: IMKInputController {
     }
 
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
+        // 系统偶发传入 NSNull，直接读 event 会在输入法进程里崩。
+        if event == nil || (event as AnyObject) is NSNull { return false }
         guard let event else { return false }
         // 这次按键若结束了编码，再加载自动同步写回的用户词。
         defer { UserDictEngineReload.flushIfIdle() }
@@ -724,6 +728,7 @@ final class MeifengInputController: IMKInputController {
 
     // 当前插入点的屏幕矩形。段尾用前一个字的右缘，避免下标越界拿到空矩形。
     private func focusedInsertionCaretRect() -> NSRect? {
+        if IMEHostWorkarounds.skipsClientGeometry() { return nil }
         guard let client = currentClient ?? (client() as? IMKTextInput) else { return nil }
         let selected = client.selectedRange()
         guard selected.location != NSNotFound else { return nil }
@@ -752,6 +757,10 @@ final class MeifengInputController: IMKInputController {
 
     /// 当前插入点的屏幕矩形，供模式提示贴在光标旁。
     private func insertionCaretRect() -> NSRect {
+        if IMEHostWorkarounds.skipsClientGeometry() {
+            let p = NSEvent.mouseLocation
+            return NSRect(x: p.x, y: p.y, width: 1, height: 16)
+        }
         guard let client = currentClient ?? (client() as? IMKTextInput) else {
             let p = NSEvent.mouseLocation
             return NSRect(x: p.x, y: p.y, width: 1, height: 16)
@@ -772,6 +781,10 @@ final class MeifengInputController: IMKInputController {
     private func markedTextScreenRect(preedit: String) -> NSRect {
         if let rect = QuickAddWordPanel.shared.compositionScreenRect() {
             return rect
+        }
+        if IMEHostWorkarounds.skipsClientGeometry() {
+            let p = NSEvent.mouseLocation
+            return NSRect(x: p.x, y: p.y, width: 0, height: 16)
         }
         guard let client = currentClient ?? (client() as? IMKTextInput) else {
             let p = NSEvent.mouseLocation
@@ -970,7 +983,9 @@ final class MeifengInputController: IMKInputController {
             commitOrClearPending(forceCommitRaw: true)
             panel.hide()
             modeHint.hide()
-            clearMarkedText()
+            if !IMEHostWorkarounds.skipsClientGeometry() {
+                clearMarkedText()
+            }
         }
     }
 
