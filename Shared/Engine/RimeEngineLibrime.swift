@@ -92,6 +92,11 @@ final class RimeEngineLibrime: RimeEngine {
         bridge.allCandidates().map(\.text)
     }
 
+    // 最多数到 limit 条。用来判断是不是唯一候选，不取词面。
+    func candidateCount(upTo limit: Int) -> Int {
+        bridge.candidateCountUp(to: limit)
+    }
+
     func redeploy() -> Bool {
         let ready = bridge.deploy()
         // 会话重建失败后必须同步失效，避免上层继续把空会话当成可用。

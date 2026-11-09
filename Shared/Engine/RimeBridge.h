@@ -45,6 +45,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable NSString *)rawInput;
 /// 拉取当前输入的全部候选（跨页）
 - (NSArray<RimeCandidateInfo *> *)allCandidates;
+/// 最多数到 limit 条就停。四码唯一只需要知道是不是恰好一条，不必把整表拉出来。
+- (NSInteger)candidateCountUpTo:(NSInteger)limit;
 - (BOOL)deploy;
 - (void)syncUserData;
 

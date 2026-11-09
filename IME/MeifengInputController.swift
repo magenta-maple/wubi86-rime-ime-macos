@@ -215,12 +215,12 @@ final class MeifengInputController: IMKInputController {
             return handled
         }
 
-        // 数字选词
-        if let snap = RimeSession.shared.bridgeEngine.snapshot(),
-           snap.isComposing,
-           let chars = event.charactersIgnoringModifiers,
+        // 数字选词。只有 1–9 才取上下文，字母键不再为了这次判断问一遍 librime。
+        if let chars = event.charactersIgnoringModifiers,
            let ch = chars.first,
-           ch >= "1", ch <= "9" {
+           ch >= "1", ch <= "9",
+           let snap = RimeSession.shared.bridgeEngine.snapshot(),
+           snap.isComposing {
             let idx = Int(String(ch))! - 1
             if idx < snap.candidates.count {
                 return selectCandidate(index: idx)
@@ -238,10 +238,8 @@ final class MeifengInputController: IMKInputController {
         }
 
         let handled = RimeSession.shared.bridgeEngine.processKey(mapped.keyCode, modifiers: mapped.modifiers)
-        log("key=\(mapped.keyCode) handled=\(handled) chars=\(event.characters ?? "")")
         if handled {
-            applyEmptyCodeClear()
-            applyUniqueFourCodeSelect()
+            applyFourCodePolicies()
             return consumeRimeUpdate()
         }
         if RimeSession.shared.bridgeEngine.snapshot()?.isComposing == true {
@@ -569,33 +567,26 @@ final class MeifengInputController: IMKInputController {
         return false
     }
 
-    // 空码清空：四码打完仍没有候选时清空编码
-    private func applyEmptyCodeClear() {
-        guard RimeBehaviorPrefs.clearEmptyCode else { return }
+    // 空码清空、四码唯一都只在打满四码时发生，共用一次上下文。
+    // 前三码用原始输入就能排除，不必先取候选。
+    private func applyFourCodePolicies() {
+        let clear = RimeBehaviorPrefs.clearEmptyCode
+        let unique = RimeBehaviorPrefs.autoSelectUniqueFourCode
+        guard clear || unique else { return }
         let engine = RimeSession.shared.bridgeEngine
+        let typed = engine.rawInput()
+        if !typed.isEmpty, !Self.isFullFourCode(typed) { return }
         guard let snap = engine.peekSnapshot(), snap.isComposing else { return }
         let preedit = snap.preedit ?? ""
-        guard Self.isFullFourCode(code(for: preedit)), snap.candidates.isEmpty else { return }
+        let code = typed.isEmpty ? preedit : typed
+        guard Self.isFullFourCode(code) else { return }
         guard DateTimeCandidates.candidates(for: preedit) == nil else { return }
-        engine.clearComposition()
-    }
-
-    // 四码唯一：打满四码且整表只有一个候选时上屏第一项
-    private func applyUniqueFourCodeSelect() {
-        guard RimeBehaviorPrefs.autoSelectUniqueFourCode else { return }
-        let engine = RimeSession.shared.bridgeEngine
-        guard let snap = engine.peekSnapshot(), snap.isComposing else { return }
-        let preedit = snap.preedit ?? ""
-        guard Self.isFullFourCode(code(for: preedit)) else { return }
-        guard DateTimeCandidates.candidates(for: preedit) == nil else { return }
-        guard engine.allCandidateTexts().count == 1 else { return }
+        if clear, snap.candidates.isEmpty {
+            engine.clearComposition()
+            return
+        }
+        guard unique, engine.candidateCount(upTo: 2) == 1 else { return }
         _ = engine.selectCandidate(index: 0)
-    }
-
-    // 当前实际输入的编码
-    private func code(for preedit: String) -> String {
-        let typed = RimeSession.shared.bridgeEngine.rawInput()
-        return typed.isEmpty ? preedit : typed
     }
 
     // 恰好四码字母且不以 z 开头（z 是反查前缀）
@@ -619,8 +610,6 @@ final class MeifengInputController: IMKInputController {
         let texts: [String] = special ?? snap.candidates.map(\.text)
         // 备注来自 Rime 候选的 comment；预置候选（日期时间）没有备注。
         let comments: [String] = special == nil ? snap.candidates.map { $0.comment ?? "" } : []
-
-        log("update preedit=\(preedit) candidates=\(texts.prefix(5).joined(separator: ",")) composing=\(snap.isComposing)")
 
         if snap.isComposing || !texts.isEmpty {
             setMarkedText(preedit)

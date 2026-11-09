@@ -8,11 +8,17 @@ final class RimeSession {
     private let lock = NSLock()
     private(set) var started = false
 
+    /// 词库表已经确认存在时，按键过程不再每次 stat。停掉引擎后重新确认。
+    private var buildPresent = false
+
     /// 是否缺少编译产物，需要全量 deploy
     private var needsFullBuild: Bool {
+        if buildPresent { return false }
         let user = RimeResourceDeployer.resolveUserDataURL()
         let table = user.appendingPathComponent("build/wubi86_jidian.table.bin")
-        return !FileManager.default.fileExists(atPath: table.path)
+        let exists = FileManager.default.fileExists(atPath: table.path)
+        if exists { buildPresent = true }
+        return !exists
     }
 
     @discardableResult
@@ -22,15 +28,19 @@ final class RimeSession {
         let force = forceFullCheck || needsFullBuild
         if started, engine.isReady {
             // 正在打字时先不部署，避免清掉当前编码。标记留到编码结束。
-            let composing = engine.snapshot()?.isComposing == true
-            if !composing, UserDictWriter.consumeNeedsDeploy() || needsFullBuild {
-                NSLog("[MeifengWubi] redeploy rime (needsFull=%d)", needsFullBuild)
-                if !engine.redeploy() {
-                    NSLog("[MeifengWubi] automatic redeploy failed, restarting")
-                    started = false
-                    return startLocked(forceFullCheck: force)
+            // 没有待部署标记时不问 librime，避免每次按键都取一遍上下文。
+            if UserDictWriter.peekNeedsDeploy() || needsFullBuild {
+                let composing = engine.peekSnapshot()?.isComposing == true
+                if !composing, UserDictWriter.consumeNeedsDeploy() || needsFullBuild {
+                    NSLog("[MeifengWubi] redeploy rime (needsFull=%d)", needsFullBuild)
+                    if !engine.redeploy() {
+                        NSLog("[MeifengWubi] automatic redeploy failed, restarting")
+                        buildPresent = false
+                        started = false
+                        return startLocked(forceFullCheck: force)
+                    }
+                    UserDictAutoSync.noteEngineDidReload()
                 }
-                UserDictAutoSync.noteEngineDidReload()
             }
             return true
         }
@@ -53,6 +63,7 @@ final class RimeSession {
         defer { lock.unlock() }
         engine.stop()
         started = false
+        buildPresent = false
     }
 
     /// 造词后重载用户词。走进程内增量部署，不 finalize 正在用的 librime。
@@ -70,6 +81,7 @@ final class RimeSession {
             NSLog("[MeifengWubi] user dict redeploy failed, restarting")
             engine.noteExternalShutdown()
             started = false
+            buildPresent = false
         }
         return startLocked(forceFullCheck: false)
     }
@@ -82,6 +94,7 @@ final class RimeSession {
         _ = UserDictWriter.consumeNeedsDeploy()
         engine.noteExternalShutdown()
         started = false
+        buildPresent = false
         return startLocked(forceFullCheck: false)
     }
 
@@ -91,6 +104,7 @@ final class RimeSession {
         defer { lock.unlock() }
         engine.stop()
         started = false
+        buildPresent = false
         let result = operation()
         _ = UserDictWriter.consumeNeedsDeploy()
         engine.noteExternalShutdown()

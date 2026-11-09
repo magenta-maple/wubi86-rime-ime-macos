@@ -110,6 +110,9 @@ final class DictLexiconIndex {
     private var byCode: [String: [DictLexiconHit]] = [:]
     private var byText: [String: [DictLexiconHit]] = [:]
     private var stamp = ""
+    // 主词库没改时沿用上次解析出的导入列表，避免每次按键把整份码表读进内存。
+    private var cachedLexiconFiles: [URL] = []
+    private var cachedMainStamp = ""
     private let lock = NSLock()
 
     private init() {}
@@ -319,13 +322,18 @@ final class DictLexiconIndex {
     // MARK: - 索引
 
     private func reloadIfNeeded() {
-        let files = lexiconFiles()
-        let next = files.map { url -> String in
-            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
-            let modified = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
-            let size = values?.fileSize ?? 0
-            return "\(url.path)|\(modified)|\(size)"
-        }.joined(separator: "\n")
+        let dir = RimeResourceDeployer.resolveUserDataURL()
+        let mainURL = dir.appendingPathComponent(WubiDictEncoder.selectedMainDictName)
+        let mainStamp = Self.fileStamp(mainURL)
+        let files: [URL]
+        if mainStamp == cachedMainStamp {
+            files = cachedLexiconFiles
+        } else {
+            files = lexiconFiles(mainURL: mainURL, dir: dir)
+            cachedLexiconFiles = files
+            cachedMainStamp = mainStamp
+        }
+        let next = files.map(Self.fileStamp).joined(separator: "\n")
         guard next != stamp else { return }
         var codes: [String: [DictLexiconHit]] = [:]
         var texts: [String: [DictLexiconHit]] = [:]
@@ -337,27 +345,29 @@ final class DictLexiconIndex {
         stamp = next
     }
 
-    // 主词库加上它 import_tables 里列出的码表。
-    private func lexiconFiles() -> [URL] {
-        let dir = RimeResourceDeployer.resolveUserDataURL()
-        let mainURL = dir.appendingPathComponent(WubiDictEncoder.selectedMainDictName)
+    private static func fileStamp(_ url: URL) -> String {
+        let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        let modified = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
+        let size = values?.fileSize ?? 0
+        return "\(url.path)|\(modified)|\(size)"
+    }
+
+    // 主词库加上它 import_tables 里列出的码表。只读到导入段结束，不把词条正文读进来。
+    private func lexiconFiles(mainURL: URL, dir: URL) -> [URL] {
         var urls: [URL] = []
-        if FileManager.default.fileExists(atPath: mainURL.path) {
-            urls.append(mainURL)
-        }
-        guard let text = try? String(contentsOf: mainURL, encoding: .utf8) else { return urls }
-        let header = text.split(separator: "\n", omittingEmptySubsequences: false)
-            .prefix { $0.trimmingCharacters(in: .whitespaces) != "..." }
+        guard FileManager.default.fileExists(atPath: mainURL.path) else { return urls }
+        urls.append(mainURL)
         var inImport = false
-        for lineSub in header {
-            let trimmed = lineSub.trimmingCharacters(in: .whitespaces)
+        Self.forEachHeaderLine(of: mainURL) { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == "..." { return false }
             if trimmed.hasPrefix("import_tables:") {
                 inImport = true
-                continue
+                return true
             }
-            guard inImport else { continue }
-            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
-            guard trimmed.hasPrefix("-") else { break }
+            guard inImport else { return true }
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { return true }
+            guard trimmed.hasPrefix("-") else { return false }
             var name = trimmed
             while name.hasPrefix("-") {
                 name.removeFirst()
@@ -366,14 +376,47 @@ final class DictLexiconIndex {
             if let hash = name.firstIndex(of: "#") {
                 name = String(name[..<hash]).trimmingCharacters(in: .whitespaces)
             }
-            guard !name.isEmpty else { continue }
+            guard !name.isEmpty else { return true }
             let file = name.hasSuffix(".dict.yaml") ? name : name + ".dict.yaml"
             let url = dir.appendingPathComponent(file)
             if FileManager.default.fileExists(atPath: url.path), !urls.contains(url) {
                 urls.append(url)
             }
+            return true
         }
         return urls
+    }
+
+    // 按行读文件头。body 返回 false 时停止，不继续读后面的词条。
+    private static func forEachHeaderLine(of url: URL, _ body: (String) -> Bool) {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return }
+        defer { try? handle.close() }
+        var pending = Data()
+        var stop = false
+        while !stop {
+            let chunk = (try? handle.read(upToCount: 4096)) ?? Data()
+            if chunk.isEmpty {
+                if !pending.isEmpty {
+                    stop = !body(Self.decodeHeaderLine(pending))
+                }
+                break
+            }
+            pending.append(chunk)
+            while let newline = pending.firstIndex(of: 0x0A) {
+                var line = pending.prefix(upTo: newline)
+                pending.removeSubrange(..<pending.index(after: newline))
+                if line.last == 0x0D { line.removeLast() }
+                if !body(Self.decodeHeaderLine(line)) {
+                    stop = true
+                    break
+                }
+            }
+            if pending.count > 1_048_576 { break }
+        }
+    }
+
+    private static func decodeHeaderLine(_ data: Data) -> String {
+        String(data: data, encoding: .utf8) ?? ""
     }
 
     private func index(

@@ -16,10 +16,10 @@ enum UserDictEngineReload {
 
     // 没有未上屏编码时才加载。正在打字则留着标记，等 handle 结束再试。
     static func flushIfIdle() {
-        if RimeSession.shared.bridgeEngine.snapshot()?.isComposing == true {
+        guard UserDictWriter.peekNeedsDeploy() else { return }
+        if RimeSession.shared.bridgeEngine.peekSnapshot()?.isComposing == true {
             return
         }
-        guard UserDictWriter.peekNeedsDeploy() else { return }
         _ = RimeSession.shared.reloadUserDictionary()
     }
 }

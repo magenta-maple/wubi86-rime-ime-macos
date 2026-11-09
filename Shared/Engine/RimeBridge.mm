@@ -179,6 +179,23 @@
     return list;
 }
 
+- (NSInteger)candidateCountUpTo:(NSInteger)limit {
+    if (limit <= 0 || !_started || !_sessionId) { return 0; }
+    if (!_api->candidate_list_begin) {
+        return MIN(limit, (NSInteger)self.currentContextPeeking.candidates.count);
+    }
+    RimeCandidateListIterator it = {0};
+    if (!_api->candidate_list_begin(_sessionId, &it)) {
+        return MIN(limit, (NSInteger)self.currentContextPeeking.candidates.count);
+    }
+    NSInteger count = 0;
+    while (count < limit && _api->candidate_list_next(&it)) {
+        count += 1;
+    }
+    _api->candidate_list_end(&it);
+    return count;
+}
+
 - (NSString *)rawInput {
     if (!_started || !_sessionId || !_api->get_input) { return nil; }
     const char *input = _api->get_input(_sessionId);

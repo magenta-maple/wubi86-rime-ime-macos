@@ -71,6 +71,11 @@ final class CandidatePanelController {
         caretRect: NSRect,
         onSelect: @escaping (Int) -> Void
     ) {
+        let unchanged = panel.isVisible
+            && candidates == lastCandidates
+            && codes == lastCodes
+            && comments == lastComments
+        let caretMoved = caretRect != lastCaretRect
         self.onSelect = onSelect
         lastCandidates = candidates
         lastCodes = codes
@@ -81,7 +86,15 @@ final class CandidatePanelController {
             panel.orderOut(nil)
             return
         }
-        render()
+        if unchanged {
+            if caretMoved {
+                let size = panel.frame.size
+                let origin = panelOrigin(width: size.width, height: size.height, below: caretRect)
+                panel.setFrame(NSRect(origin: origin, size: size), display: true, animate: false)
+            }
+        } else {
+            render()
+        }
         // 每次更新都前置，并重申层级（防止被系统改回）。
         applyCandidateWindowLevel()
         panel.alphaValue = 1
