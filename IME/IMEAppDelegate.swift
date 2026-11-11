@@ -17,10 +17,7 @@ enum UserDictEngineReload {
     // 没有未上屏编码时才加载。正在打字则留着标记，等 handle 结束再试。
     static func flushIfIdle() {
         guard UserDictWriter.peekNeedsDeploy() else { return }
-        if RimeSession.shared.bridgeEngine.peekSnapshot()?.isComposing == true {
-            return
-        }
-        _ = RimeSession.shared.reloadUserDictionary()
+        RimeSession.shared.prepareInBackground()
     }
 }
 
@@ -55,16 +52,16 @@ enum MeifengIMEMain {
         // 启动时再设 accessory，部分应用（含 Electron）不会把按键交给输入法，菜单项也不出现。
         let delegate = IMEAppDelegate()
         app.delegate = delegate
-        // IMK 要求尽早建立连接名，不要等 run loop 空转
+        // IMK 要求尽早建立连接名，不要等 run loop 空转。
+        // 词库编译放到 runloop 起来之后，否则 TextInputMenuAgent 连不上，输入法在列表里是灰色。
         delegate.startServer()
-        _ = RimeSession.shared.ensureStarted(forceFullCheck: false)
         IMEAppDelegate.installEditingMenu()
         QuickAddHotKey.install()
         UserDictAutoSync.install()
         UserDictEngineReload.install()
         // 各软件会记住自己的输入法；选中玫枫后再点别的输入框，要跟着过去
         MeifengInputSourceLock.install()
-        IMEAppDelegate.appendLaunchLog("main entered, server+rime ready")
+        IMEAppDelegate.appendLaunchLog("main entered, IMKServer ready")
         app.run()
     }
 }
@@ -85,15 +82,15 @@ final class IMEAppDelegate: NSObject, NSApplicationDelegate {
         // 双保险：若 main 已建好则跳过
         if server == nil {
             startServer()
-            _ = RimeSession.shared.ensureStarted(forceFullCheck: false)
         }
+        RimeSession.shared.prepareInBackground()
         // 设置页改了 page_size / 翻页键后立即 redeploy
         DistributedNotificationCenter.default().addObserver(
             forName: RimeBehaviorPrefs.didChangeNotification,
             object: nil,
             queue: .main
         ) { _ in
-            _ = RimeSession.shared.ensureStarted(forceFullCheck: false)
+            RimeSession.shared.prepareInBackground()
         }
         Self.appendLaunchLog("applicationDidFinishLaunching")
     }

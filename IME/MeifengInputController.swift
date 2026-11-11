@@ -82,8 +82,9 @@ final class MeifengInputController: IMKInputController {
         super.activateServer(sender)
         currentClient = (sender as? IMKTextInput) ?? (client() as? IMKTextInput)
         Self.activeController = self
-        let ok = RimeSession.shared.ensureStarted()
-        log("activateServer rime=\(ok) client=\(currentClient != nil)")
+        RimeSession.shared.prepareInBackground()
+        let busy = RimeSession.shared.menuExplanation
+        log("activateServer rime=\(busy ?? "ready") client=\(currentClient != nil)")
         // 记录当前大小写状态，光标提示要优先显示「大写」
         capsLockOn = NSEvent.modifierFlags.contains(.capsLock)
         // 光标出现时先标出当前中/英，避免打字后才发现要切换。可在设置里关闭。
@@ -171,6 +172,13 @@ final class MeifengInputController: IMKInputController {
             return editing
         }
 
+        guard RimeSession.shared.beginInput() else {
+            log("handle: rime not ready (\(RimeSession.shared.menuExplanation ?? "busy"))")
+            passToClient = true
+            return false
+        }
+        defer { RimeSession.shared.endInput() }
+
         // 候选出现时：造词那组修饰键 + 数字，删除对应候选。要放在 Command 提前返回之前。
         if handleDeleteCandidateShortcut(event) {
             return true
@@ -182,12 +190,6 @@ final class MeifengInputController: IMKInputController {
 
         // 有 Command 交给系统
         if event.modifierFlags.contains(.command) {
-            return false
-        }
-
-        guard RimeSession.shared.ensureStarted() else {
-            log("handle: rime not ready")
-            passToClient = true
             return false
         }
 
@@ -949,8 +951,9 @@ final class MeifengInputController: IMKInputController {
     }
 
     private func commitOrClearPending(forceCommitRaw: Bool = false) {
+        guard RimeSession.shared.beginInput() else { return }
+        defer { RimeSession.shared.endInput() }
         let engine = RimeSession.shared.bridgeEngine
-        guard RimeSession.shared.started else { return }
         if let snap = engine.snapshot() {
             if let commit = snap.commitText, !commit.isEmpty {
                 insertText(commit)
@@ -982,13 +985,20 @@ final class MeifengInputController: IMKInputController {
         // 状态栏菜单属于 TextInputMenuAgent。自动启用时它的响应链里没有本控制器，项会被关掉并隐藏。
         let menu = NSMenu(title: "玫枫五笔")
         menu.autoenablesItems = false
+        if let explanation = RimeSession.shared.menuExplanation {
+            let status = NSMenuItem(title: explanation, action: nil, keyEquivalent: "")
+            status.isEnabled = false
+            menu.addItem(status)
+            menu.addItem(.separator())
+            RimeSession.shared.prepareInBackground()
+        }
         let deploy = NSMenuItem(
             title: "部署",
             action: #selector(deployFromMenu(_:)),
             keyEquivalent: ""
         )
         deploy.target = self
-        deploy.isEnabled = true
+        deploy.isEnabled = !RimeSession.shared.isBusy
         menu.addItem(deploy)
         // ⌘, 是各 App 打开自己设置的系统默认键，输入法菜单不能占用。
         let prefs = NSMenuItem(
