@@ -102,9 +102,16 @@ struct CandidateSkin: Codable, Equatable {
             }
         }
 
+        /// 按家族名或 PostScript 名解析字体；空串表示系统默认。
+        static func resolveFont(name: String, size: CGFloat) -> NSFont? {
+            guard !name.isEmpty else { return nil }
+            if let font = NSFont(name: name, size: size) { return font }
+            return NSFontManager.shared.font(withFamily: name, traits: [], weight: 5, size: size)
+        }
+
         /// 当前字体实际提供的字重；系统字体支持全部档位。
         static func available(forFontName name: String) -> [FontWeight] {
-            guard !name.isEmpty, let font = NSFont(name: name, size: 14),
+            guard let font = resolveFont(name: name, size: 14),
                   let family = font.familyName,
                   let members = NSFontManager.shared.availableMembers(ofFontFamily: family),
                   !members.isEmpty

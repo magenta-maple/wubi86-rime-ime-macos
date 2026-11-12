@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import Foundation
 
 /// 候选栏外观：对齐系统中文输入法常见选项（横/纵、字号、字体等）
@@ -164,12 +165,22 @@ enum IMEAppearancePrefs {
         }
     }
 
-    // 候选字体 PostScript 名；空字符串表示系统默认
+    // 候选字体家族名（或 PostScript 名）；空字符串表示系统默认
     static var fontName: String {
         get { skin.fontName }
         set {
             updateSkin { $0.fontName = newValue }
         }
+    }
+
+    /// 设置页「候选字体」下拉：系统默认 + 本机全部中文可用字体。
+    static var candidateFontChoices: [(name: String, title: String)] {
+        fontChoicesLock.lock()
+        defer { fontChoicesLock.unlock() }
+        if let cached = cachedFontChoices { return cached }
+        let built = buildCandidateFontChoices()
+        cachedFontChoices = built
+        return built
     }
 
     /// 按当前偏好生成 NSFont
@@ -186,7 +197,7 @@ enum IMEAppearancePrefs {
     ) -> NSFont {
         let sz = size ?? CGFloat(fontSize)
         let name = fontName
-        if !name.isEmpty, let custom = NSFont(name: name, size: sz) {
+        if let custom = CandidateSkin.FontWeight.resolveFont(name: name, size: sz) {
             if weight != .regular {
                 let descriptor = custom.fontDescriptor.addingAttributes([
                     .traits: [NSFontDescriptor.TraitKey.weight: weight.nsWeight.rawValue]
@@ -196,6 +207,89 @@ enum IMEAppearancePrefs {
             return custom
         }
         return NSFont.systemFont(ofSize: sz, weight: weight.nsWeight)
+    }
+
+    // MARK: - 系统中文字体枚举
+
+    private static let fontChoicesLock = NSLock()
+    private static var cachedFontChoices: [(name: String, title: String)]?
+
+    /// 常用中文字体的友好显示名；其余用系统本地化家族名。
+    private static let friendlyFontTitles: [String: String] = [
+        "PingFang SC": "苹方",
+        "PingFang TC": "蘋方（繁）",
+        "PingFang HK": "蘋方（港）",
+        "Heiti SC": "黑体",
+        "Heiti TC": "黑體（繁）",
+        "Songti SC": "宋体",
+        "Songti TC": "宋體（繁）",
+        "Kaiti SC": "楷体",
+        "Kaiti TC": "楷體（繁）",
+        "STSong": "华文宋体",
+        "STKaiti": "华文楷体",
+        "STHeiti": "华文黑体",
+        "STFangsong": "华文仿宋",
+        "Hiragino Sans GB": "冬青黑体",
+        "GB18030 Bitmap": "GB18030 点阵"
+    ]
+
+    private static func buildCandidateFontChoices() -> [(name: String, title: String)] {
+        var items: [(name: String, title: String)] = [("", "系统默认")]
+        var seen = Set<String>([""])
+        let families = NSFontManager.shared.availableFontFamilies
+            .filter(isChineseCapableFamily)
+            .sorted { lhs, rhs in
+                displayTitle(forFamily: lhs).localizedStandardCompare(displayTitle(forFamily: rhs))
+                    == .orderedAscending
+            }
+        for family in families {
+            guard seen.insert(family).inserted else { continue }
+            items.append((family, displayTitle(forFamily: family)))
+        }
+        return items
+    }
+
+    private static func displayTitle(forFamily family: String) -> String {
+        if let title = friendlyFontTitles[family] { return title }
+        let localized = NSFontManager.shared.localizedName(forFamily: family, face: nil)
+        return localized.isEmpty ? family : localized
+    }
+
+    /// 语言标签含 zh，或能显示汉字且家族名像中文字体（含用户自行安装的字体）。
+    private static func isChineseCapableFamily(_ family: String) -> Bool {
+        guard let font = CandidateSkin.FontWeight.resolveFont(name: family, size: 14) else {
+            return false
+        }
+        let ct = font as CTFont
+        if let langs = CTFontCopyAttribute(ct, kCTFontLanguagesAttribute) as? [String],
+           langs.contains(where: { $0.hasPrefix("zh") })
+        {
+            return true
+        }
+        guard fontHasCharacter(ct, 0x4E2D) else { return false }
+        return familyLooksChinese(family)
+    }
+
+    private static func fontHasCharacter(_ font: CTFont, _ scalar: UTF16.CodeUnit) -> Bool {
+        var ch = scalar
+        var glyph: CGGlyph = 0
+        return CTFontGetGlyphsForCharacters(font, &ch, &glyph, 1) && glyph != 0
+    }
+
+    private static let chineseFamilyHint: NSRegularExpression = {
+        // 简繁后缀、常见中文字体商品名；避免把纯日韩字体塞进候选字体列表。
+        let pattern = #"(?i)(?:CJK|\bSC\b|\bTC\b|\bHC\b|\bCN\b|\bGB\b|Chinese|PingFang|Heiti|Songti|Kaiti|Yuanti|Xingkai|Baoli|Lantinghei|Hannotate|HanziPen|Wawati|LingWai|STSong|STHeiti|STKaiti|STFangsong|Source.?Han|Noto.?(?:Sans|Serif).?CJK|WenQuanYi|Microsoft.?YaHei|DengXian|SimSun|SimHei|FangSong|KaiTi)"#
+        return try! NSRegularExpression(pattern: pattern)
+    }()
+
+    private static func familyLooksChinese(_ family: String) -> Bool {
+        if family.unicodeScalars.contains(where: {
+            ($0.value >= 0x4E00 && $0.value <= 0x9FFF) || ($0.value >= 0x3400 && $0.value <= 0x4DBF)
+        }) {
+            return true
+        }
+        let range = NSRange(family.startIndex..<family.endIndex, in: family)
+        return chineseFamilyHint.firstMatch(in: family, options: [], range: range) != nil
     }
 
     // 编码显示范围：补码只显示还没打的字母，完整显示词条的全部编码。

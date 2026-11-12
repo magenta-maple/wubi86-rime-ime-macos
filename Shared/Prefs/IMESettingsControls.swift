@@ -17,15 +17,10 @@ enum IMESettingsControls {
 
     static var lexiconActions: LexiconActions?
 
-    static let preferredFonts: [(name: String, title: String)] = [
-        ("", "系统默认"),
-        ("PingFang SC", "苹方"),
-        ("Heiti SC", "黑体"),
-        ("Songti SC", "宋体"),
-        ("Kaiti SC", "楷体"),
-        ("STSong", "华文宋体"),
-        ("Hiragino Sans GB", "冬青黑体")
-    ]
+    /// 系统默认 + 本机全部中文可用字体（含用户安装）。
+    static var preferredFonts: [(name: String, title: String)] {
+        IMEAppearancePrefs.candidateFontChoices
+    }
 
     static func makeFormView(size: NSSize = preferredWindowSize) -> NSView {
         let view = SettingsRootView(frame: NSRect(origin: .zero, size: size))
@@ -393,13 +388,17 @@ private final class SettingsRootView: NSView {
         PageTarget.shared.valueLabel = pageValue
 
         let font = NSPopUpButton(frame: .zero, pullsDown: false)
-        for item in IMESettingsControls.preferredFonts {
+        var fontChoices = IMESettingsControls.preferredFonts
+        let currentFont = IMEAppearancePrefs.fontName
+        // 当前已选字体若不在枚举结果里（例如已卸载），仍保留一项以免显示成「系统默认」。
+        if !currentFont.isEmpty, !fontChoices.contains(where: { $0.name == currentFont }) {
+            fontChoices.insert((currentFont, currentFont), at: 1)
+        }
+        for item in fontChoices {
             font.addItem(withTitle: item.title)
             font.lastItem?.representedObject = item.name
         }
-        font.selectItem(at: IMESettingsControls.preferredFonts.firstIndex {
-            $0.name == IMEAppearancePrefs.fontName
-        } ?? 0)
+        font.selectItem(at: fontChoices.firstIndex { $0.name == currentFont } ?? 0)
         font.target = FontTarget.shared
         font.action = #selector(FontTarget.changed(_:))
         font.widthAnchor.constraint(greaterThanOrEqualToConstant: 140).isActive = true
